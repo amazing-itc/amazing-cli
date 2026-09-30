@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","session_id":"sess-cursor-1","model":"gpt-5"}
+{"type":"assistant","timestamp_ms":1,"message":{"content":[{"type":"text","text":"Hello"}]}}
+{"type":"assistant","timestamp_ms":2,"message":{"content":[{"type":"text","text":"Hello from cursor"}]}}
+not a json line from the cli
+{"type":"thinking","text":"planning the next step"}
+{"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":"README.md"}}}}
+{"type":"tool_call","subtype":"completed","tool_call":{"readToolCall":{"result":"ok"}}}
+{"type":"result","subtype":"success","session_id":"sess-cursor-1","usage":{"inputTokens":11,"outputTokens":22}}

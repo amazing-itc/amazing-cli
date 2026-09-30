@@ -1,0 +1,14 @@
+# Harness over LiteLLM. No argv: the module runs the loop. Compaction is controllable.
+family: external
+kind: harness
+label: External
+models:
+  source: remote
+capabilities:
+  streaming: true
+  resume: true
+  modes: [ask, plan, agent]
+  attachments: [image, file, folder]
+  compaction: controllable
+  contextUsage: exact
+  mcp: true

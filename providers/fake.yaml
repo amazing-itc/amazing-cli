@@ -1,0 +1,15 @@
+# In-process test double. Registered only when AMAZING_CLI_ENABLE_FAKE or AMAZING_CLI_REGISTER_FAKE is set.
+family: fake
+kind: fake
+label: Fake
+models:
+  source: static
+  static: [fake-model]
+capabilities:
+  streaming: true
+  resume: true
+  modes: [ask, plan, agent]
+  attachments: [image, file, folder]
+  compaction: controllable
+  contextUsage: exact
+  mcp: false

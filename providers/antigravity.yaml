@@ -1,0 +1,36 @@
+# Ask and plan omit --dangerously-skip-permissions. Plan prefixes the prompt.
+# Resume flag is --conversation. Print timeout defaults to 600 (AMAZING_CLI_ANTIGRAVITY_PRINT_TIMEOUT).
+# AMAZING_CLI_ANTIGRAVITY_SKIP_PERMISSIONS=0|false omits the skip flag on agent too.
+family: antigravity
+kind: spawn
+label: Antigravity
+credentialEnv: GEMINI_API_KEY
+binary: agy
+parser: antigravity
+permissions: ["--dangerously-skip-permissions"]
+planPrompt: "Reply with a plan only; do not apply any edits.\n\n"
+argv:
+  - -p
+  - "{prompt}"
+  - --output-format
+  - stream-json
+  - "{antigravity-skip}"
+  - --print-timeout
+  - "{print-timeout}"
+  - --model
+  - "{model}"
+  - --conversation
+  - "{resume}"
+models:
+  source: static
+  static:
+    - gemini-2.5-pro
+    - gemini-2.5-flash
+capabilities:
+  streaming: true
+  resume: true
+  modes: [ask, plan, agent]
+  attachments: [image, file, folder]
+  compaction: internal
+  contextUsage: exact
+  mcp: true

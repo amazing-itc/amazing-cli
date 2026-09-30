@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Docs
+    url: https://github.com/amazing-itc/amazing-cli
+    about: Quick start, architecture, and examples in docs/

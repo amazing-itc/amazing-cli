@@ -1,0 +1,53 @@
+# {index} is the bundled index.js when Cursor is invoked via its private node.
+# Ask uses --mode=ask and plan uses --mode=plan, both instead of --force.
+# {model} and {resume} are omitted, with their flags, when the turn does not set them.
+family: cursor
+kind: spawn
+label: Cursor
+credentialEnv: CURSOR_API_KEY
+binary: agent
+parser: cursor
+permissions: ["--trust", "--force", "--approve-mcps"]
+argv:
+  - "{index}"
+  - -p
+  - --trust
+  - "{mode.ask:--mode=ask|plan:--mode=plan|agent:--force}"
+  - "{approve-mcps}"
+  - --workspace
+  - "{workspace}"
+  - --output-format
+  - stream-json
+  - --stream-partial-output
+  - --model
+  - "{model}"
+  - --resume
+  - "{resume}"
+  - "{prompt}"
+models:
+  source: static
+  static:
+    - auto
+    - cursor-grok-4.6-high
+    - cursor-grok-4.6-high-fast
+    - cursor-grok-4.6-xhigh
+    - cursor-grok-4.6-medium
+    - cursor-grok-4.6-low
+    - cursor-grok-4.5-high
+    - cursor-grok-4.5-high-fast
+    - cursor-grok-4.5-medium
+    - cursor-grok-4.5-low
+    - composer-2.5
+    - composer-2.5-fast
+    - gpt-5.6-sol-high
+    - gpt-5.5-high
+    - claude-opus-5-thinking-high
+    - claude-opus-4-8-thinking-high
+capabilities:
+  streaming: true
+  resume: true
+  modes: [ask, plan, agent]
+  attachments: [image, file, folder]
+  compaction: internal
+  contextUsage: exact
+  mcp: true

@@ -1,0 +1,103 @@
+# amazing-cli — shared AI execution (this repo + LiteLLM)
+#
+#   cp .env.example .env   # service key + LiteLLM secrets
+#   docker compose up -d --build
+#
+# Host ports:
+#   amazing-cli  13200 → 3200
+#   litellm UI   14000 → 4000   (http://localhost:14000/ui)
+#
+# Products call the published port 13200. They do not join this network.
+# Do not attach them to `amazing-llm`.
+# Callers pass workspace.path on each run. Absolute paths are used as-is (no product folder).
+# Optional AMAZING_CLI_WORKSPACES_ROOT only jails relative paths under /data/products/<id>.
+# Do not set user:. The entrypoint owns /data/amazing-cli inside the container.
+
+name: amazing
+
+services:
+  amazing-cli:
+    build:
+      context: .
+    container_name: amazing-cli
+    restart: unless-stopped
+    environment:
+      PORT: "3200"
+      AMAZING_CLI_DATA_ROOT: /data/amazing-cli
+      AMAZING_CLI_WORKSPACES_ROOT: /data/products
+      AMAZING_CLI_API_KEY: ${AMAZING_CLI_API_KEY:?set AMAZING_CLI_API_KEY in .env}
+      AMAZING_CLI_REGISTER_FAKE: ${AMAZING_CLI_REGISTER_FAKE:-true}
+      AMAZING_CLI_MAX_CONCURRENT_RUNS: ${AMAZING_CLI_MAX_CONCURRENT_RUNS:-4}
+      AMAZING_CLI_MAX_CONCURRENT_RUNS_PER_PRODUCT: ${AMAZING_CLI_MAX_CONCURRENT_RUNS_PER_PRODUCT:-2}
+      # Retention of persistent sessions: mandatory, no default in code. Values here are the deploy policy.
+      AMAZING_CLI_SESSION_IDLE_TTL_SEC: ${AMAZING_CLI_SESSION_IDLE_TTL_SEC:-3600}
+      AMAZING_CLI_SESSION_SWEEP_SEC: ${AMAZING_CLI_SESSION_SWEEP_SEC:-60}
+      LITELLM_BASE_URL: http://litellm:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      HOME: ${HOME}
+    volumes:
+      - amazing-cli-data:/data/amazing-cli
+      - ${WORKSPACES_HOST_DIR:-./workspaces}:/data/products
+      - ${HOME}:${HOME}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "13200:3200"
+    networks:
+      - amazing
+      - amazing-llm
+    depends_on:
+      litellm:
+        condition: service_started
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: amazing-litellm
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      DATABASE_URL: postgresql://${LITELLM_DB_USER:?}:${LITELLM_DB_PASSWORD:?}@litellm-db:5432/${LITELLM_DB_NAME:-litellm}
+      STORE_MODEL_IN_DB: "True"
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      UI_USERNAME: ${UI_USERNAME:-}
+      UI_PASSWORD: ${UI_PASSWORD:-}
+    volumes:
+      - ./infra/litellm/config.yaml:/app/config.yaml:ro
+    ports:
+      - "14000:4000"
+    networks:
+      - amazing-llm
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+
+  litellm-db:
+    image: postgres:16-alpine
+    container_name: amazing-litellm-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LITELLM_DB_USER:?}
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:?}
+      POSTGRES_DB: ${LITELLM_DB_NAME:-litellm}
+    volumes:
+      - litellm-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LITELLM_DB_USER} -d ${LITELLM_DB_NAME:-litellm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - amazing-llm
+
+networks:
+  amazing:
+    name: amazing
+    attachable: true
+  amazing-llm:
+
+volumes:
+  amazing-cli-data:
+  litellm-db:

@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"sess-claude-1","model":"claude-sonnet-4"}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Hello world"}]}}
+{"type":"result","usage":{"input_tokens":11,"output_tokens":22},"total_cost_usd":0.01}

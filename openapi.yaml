@@ -1,0 +1,1321 @@
+openapi: 3.1.0
+info:
+  title: amazing-cli
+  version: 0.1.0
+  description: |
+    Single AI execution service. Callers submit runs, stream normalized
+    events over SSE and cancel runs. Every `/v1` route requires
+    `Authorization: Bearer <AMAZING_CLI_API_KEY>` **and** `X-Amazing-Product: <id>`; `/health` is public.
+    The id is chosen by the caller. This service does not register products.
+
+    Errors are always `{ "error": { "code", "message" } }` (schema `Error`).
+
+servers:
+  - url: http://amazing-cli:3200
+
+security:
+  - productKey: []
+
+tags:
+  - name: health
+  - name: providers
+  - name: context
+  - name: runs
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Service and provider health (no auth)
+      security: []
+      responses:
+        '200':
+          description: Health snapshot. `UP` when at least one provider is available, else `DEGRADED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+
+  /v1/providers:
+    get:
+      tags: [providers]
+      summary: Registered provider families with capabilities and availability
+      parameters:
+        - $ref: '#/components/parameters/Product'
+      responses:
+        '200':
+          description: One entry per registered family.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProviderInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/providers/{family}/models:
+    get:
+      tags: [providers]
+      summary: Models exposed by one provider family
+      description: |
+        `external` lists the live LiteLLM catalog. Native families list that CLI's catalog,
+        merged with ids the CLI reports when it is installed (`--list-models` / `codex debug models`).
+      parameters:
+        - $ref: '#/components/parameters/Product'
+        - name: family
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Family'
+      responses:
+        '200':
+          description: Model list for the family. Native labels are the model name, without a connection prefix.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalModels'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Unknown family, or a family that does not list models (`error.code = not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: External provider not configured or LiteLLM unreachable (`error.code = litellm_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/context/preview:
+    post:
+      tags: [context]
+      summary: Estimate context usage for a draft turn
+      description: |
+        Returns the same `ContextUsage` shape as the `context/usage` run event.
+        Text uses chars/4; images use bytes/4. Folder attachments count only the path.
+        `contextWindow` is the model's `maxInputTokens` when published; otherwise null (never a hardcoded default).
+      parameters:
+        - $ref: '#/components/parameters/Product'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContextPreviewRequest'
+      responses:
+        '200':
+          description: Context usage manifesto.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextUsage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          description: Invalid body (`error.code = validation`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/sessions:
+    post:
+      tags: [sessions]
+      summary: Create a session
+      description: >-
+        A session owns the isolated HOME and the conversation log, so native CLIs can resume between turns.
+        The `home/` directory is created immediately.
+      parameters:
+        - $ref: '#/components/parameters/Product'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '202':
+          description: Session created (`IDLE`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          description: '`validation` (bad body) or `workspace_out_of_root`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: '`duplicate_session`: a session with that `sessionId` already exists.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      tags: [sessions]
+      summary: List the authenticated product's sessions
+      parameters:
+        - $ref: '#/components/parameters/Product'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/SessionStatus'
+      responses:
+        '200':
+          description: Sessions of the authenticated product, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Session'
+        '400':
+          description: '`validation`: `status` is not a known status.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/sessions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Product'
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [sessions]
+      summary: Read one session
+      responses:
+        '200':
+          description: The session, including `providerSessionRef`, `lastTurnId`, `turnCount`, `context` and `policy`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          description: '`validation`: the id is not a valid session id.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`not_found`: unknown id, or a session owned by another product.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [sessions]
+      summary: Close a session
+      description: Cancels a turn in progress (within 5 s), removes `home/`, keeps `meta.json` and `session.jsonl`, and marks the session `CLOSED`. Idempotent.
+      responses:
+        '200':
+          description: The session, now `CLOSED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          description: '`validation`: the id is not a valid session id.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`not_found`: unknown id, or a session owned by another product.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/sessions/{id}/turns:
+    post:
+      tags: [sessions]
+      summary: Send a turn to a session
+      description: >-
+        Same body as `RunRequest` minus `family`, `workspace`, `sessionRef` and `sessionId` — those belong to the
+        session. The run resumes the session's provider ref inside the session's HOME.
+      parameters:
+        - $ref: '#/components/parameters/Product'
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TurnRequest'
+      responses:
+        '202':
+          description: Turn accepted. `RunRecord.sessionId` is the session; `sessionRef` is the provider ref being resumed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunRecord'
+        '400':
+          description: '`validation`: bad body, or the body restates `family`, `workspace`, `sessionRef` or `sessionId`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`not_found`: unknown id, or a session owned by another product.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`session_busy` (a turn is `QUEUED` or `RUNNING`) or `session_closed`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/sessions/{id}/compact:
+    post:
+      tags: [sessions]
+      summary: Compact a session log
+      description: >-
+        Rewrites the session log down to a retained tail and appends a `compaction` event.
+        Only families that declare compaction `controllable` accept this. Native CLIs compact
+        inside their own process and respond `unsupported`.
+      parameters:
+        - $ref: '#/components/parameters/Product'
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Compaction result. `dropped` is 0 when the log was already short.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompactResult'
+        '400':
+          description: '`unsupported` when the family declares compaction `internal` or `none`. `validation` for a bad id.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`not_found`: unknown id, or a session owned by another product.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`session_busy` or `session_closed`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/sessions/{id}/events:
+    get:
+      tags: [sessions]
+      summary: Read the session's conversation log
+      description: '`session.jsonl` as JSON lines — the conversation events accumulated across turns (`user/message`, `assistant/message`, `tool/call`, `tool/result`, `compaction`, `session/ref-changed`).'
+      parameters:
+        - $ref: '#/components/parameters/Product'
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: The log, one JSON object per line (empty when the session has no conversation yet).
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+        '400':
+          description: '`validation`: the id is not a valid session id.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`not_found`: unknown id, or a session owned by another product.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/runs:
+    post:
+      tags: [runs]
+      summary: Submit a run
+      parameters:
+        - $ref: '#/components/parameters/Product'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunRequest'
+      responses:
+        '202':
+          description: Run accepted (`QUEUED` or already `RUNNING`). The response never carries `credential`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunRecord'
+        '400':
+          description: >-
+            `validation` (bad body, `workspace.product` ≠ authenticated product), `workspace_out_of_root`,
+            `credential_missing` (native family without secret) or `unsupported` (family not registered).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`not_found`: `sessionId` names no session of the authenticated product.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            `duplicate_run` (a run with this `runId` already exists), `session_busy` (the session already has a live turn)
+            or `session_closed` (the session was closed).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      tags: [runs]
+      summary: List the authenticated product's runs
+      parameters:
+        - $ref: '#/components/parameters/Product'
+        - name: product
+          in: query
+          required: false
+          description: Must equal the authenticated product when present (400 `validation` otherwise).
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/RunStatus'
+      responses:
+        '200':
+          description: Runs of the authenticated product, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RunRecord'
+        '400':
+          description: '`validation`: foreign `product` or unknown `status`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/runs/{id}:
+    get:
+      tags: [runs]
+      summary: Run snapshot
+      parameters:
+        - $ref: '#/components/parameters/Product'
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Current record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/runs/{id}/events:
+    get:
+      tags: [runs]
+      summary: Server-Sent Events stream of the run
+      description: |
+        `text/event-stream`. Each SSE message is `id: <runId>:<seq>` / `event: <type>` / `data: <RunEvent JSON>`.
+        Event names are the `RunEvent.type` values: `run/queued`, `run/started`, `context/usage`, `system/init`, `assistant/delta`,
+        `assistant/message`, `assistant/thinking`, `tool/call`, `tool/result`, `log/line`, `llm/retry`, `compaction`, `run/finished`.
+        Comment lines `: ping` are heartbeats. The stream replays `events.jsonl` from `Last-Event-ID` (exclusive),
+        then follows live events and ends right after `run/finished`.
+      parameters:
+        - $ref: '#/components/parameters/Product'
+        - $ref: '#/components/parameters/RunId'
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: '`<runId>:<seq>` of the last event received; replay resumes after it. Invalid values replay everything.'
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SSE stream; every `data:` payload validates against `RunEvent`.
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/RunEvent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/runs/{id}/cancel:
+    post:
+      tags: [runs]
+      summary: Cancel a queued or running run
+      description: Resolves once the provider observed the abort (≤ 5 s); the returned record is `CANCELLED`.
+      parameters:
+        - $ref: '#/components/parameters/Product'
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Cancelled record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Run already finished (`error.code = validation`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    productKey:
+      type: http
+      scheme: bearer
+      description: The service secret `AMAZING_CLI_API_KEY`, sent with `X-Amazing-Product`.
+
+  parameters:
+    Product:
+      name: X-Amazing-Product
+      in: header
+      required: true
+      description: Opaque caller id. Any non-empty value is accepted. Runs and sessions are separated by this id. Every id is served the same way.
+      schema:
+        type: string
+        minLength: 1
+    RunId:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/RunId'
+    SessionId:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/SessionId'
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer, or a missing `X-Amazing-Product` (`error.code = unauthorized`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Unknown run, or a run owned by another product (`error.code = not_found`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    RunId:
+      type: string
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+
+    SessionId:
+      type: string
+      description: Same rule as `RunId`; a single path segment under `sessions/`.
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+
+    Family:
+      type: string
+      description: Provider id declared in a manifest. Same rule the loader uses.
+      pattern: '^[a-z][a-z0-9-]{1,31}$'
+
+    ProviderKind:
+      type: string
+      enum: [spawn, harness, fake]
+
+    ProviderCapabilities:
+      type: object
+      required: [streaming, resume, modes, attachments, compaction, contextUsage, mcp]
+      properties:
+        streaming:
+          type: boolean
+        resume:
+          type: boolean
+        modes:
+          type: array
+          items:
+            type: string
+        attachments:
+          type: array
+          items:
+            type: string
+            enum: [image, file, folder]
+        compaction:
+          type: string
+          enum: [none, internal, controllable]
+        contextUsage:
+          type: string
+          enum: [none, estimate, exact]
+        mcp:
+          type: boolean
+      additionalProperties: false
+
+    RunStatus:
+      type: string
+      enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED]
+
+    SessionStatus:
+      type: string
+      enum: [IDLE, BUSY, CLOSED]
+
+    WindowPolicy:
+      type: string
+      enum: [persistent, ephemeral]
+
+    SessionPolicy:
+      type: object
+      required: [window]
+      properties:
+        window:
+          $ref: '#/components/schemas/WindowPolicy'
+        compaction:
+          type: object
+          description: Honoured only when the family declares compaction controllable. Native CLIs are internal and ignore it.
+          required: [auto]
+          properties:
+            auto:
+              type: boolean
+            thresholdRatio:
+              type: number
+            retainRatio:
+              type: number
+          additionalProperties: false
+      additionalProperties: false
+
+    Session:
+      type: object
+      description: Persisted session state (`sessions/{id}/meta.json`). Never contains a credential.
+      required: [id, product, family, status, workspaceDir, policy, turnCount, createdAt, lastActivityAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/SessionId'
+        product:
+          type: string
+        family:
+          $ref: '#/components/schemas/Family'
+        status:
+          $ref: '#/components/schemas/SessionStatus'
+        workspaceDir:
+          type: string
+        modelId:
+          type: string
+        mode:
+          $ref: '#/components/schemas/RunMode'
+        policy:
+          $ref: '#/components/schemas/SessionPolicy'
+        providerSessionRef:
+          type: string
+          description: Ref the CLI handed back for resuming (`--resume`, thread id, ...).
+        lastTurnId:
+          type: string
+        turnCount:
+          type: integer
+          minimum: 0
+        context:
+          $ref: '#/components/schemas/ContextUsage'
+        usage:
+          $ref: '#/components/schemas/Usage'
+        createdAt:
+          type: string
+          format: date-time
+        lastActivityAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+        meta:
+          $ref: '#/components/schemas/StringMap'
+      additionalProperties: false
+
+    CreateSessionRequest:
+      type: object
+      required: [family, workspace]
+      properties:
+        sessionId:
+          $ref: '#/components/schemas/SessionId'
+          description: Absent ⇒ the server generates one.
+        family:
+          $ref: '#/components/schemas/Family'
+        workspace:
+          type: object
+          required: [path]
+          properties:
+            path:
+              type: string
+              description: Relative to the product's workspace root (absolute accepted only when already inside it).
+          additionalProperties: false
+        modelId:
+          type: string
+        mode:
+          $ref: '#/components/schemas/RunMode'
+        policy:
+          $ref: '#/components/schemas/SessionPolicy'
+          description: 'Absent means { window: persistent }.'
+        meta:
+          $ref: '#/components/schemas/StringMap'
+      additionalProperties: false
+
+    ErrorCode:
+      type: string
+      enum:
+        - unauthorized
+        - validation
+        - workspace_out_of_root
+        - credential_missing
+        - credential_invalid
+        - cli_not_found
+        - model_not_found
+        - litellm_unavailable
+        - timeout
+        - interrupted
+        - cancelled
+        - duplicate_run
+        - session_busy
+        - duplicate_session
+        - session_closed
+        - unsupported
+        - not_found
+        - internal
+
+    RunError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+      additionalProperties: false
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/RunError'
+      additionalProperties: false
+
+    Usage:
+      type: object
+      properties:
+        inputTokens:
+          type: number
+        outputTokens:
+          type: number
+        costUsd:
+          type: number
+      additionalProperties: false
+
+    StringMap:
+      type: object
+      additionalProperties:
+        type: string
+
+    McpServer:
+      type: object
+      required: [name, url]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        url:
+          type: string
+          minLength: 1
+        headers:
+          $ref: '#/components/schemas/StringMap'
+      additionalProperties: false
+
+    RunMode:
+      type: string
+      enum: [ask, plan, agent]
+
+    RunAttachment:
+      type: object
+      required: [kind, path, name]
+      properties:
+        kind:
+          type: string
+          enum: [image, file, folder]
+        path:
+          type: string
+        name:
+          type: string
+      additionalProperties: false
+
+    RunRequest:
+      type: object
+      required: [runId, family, prompt, workspace]
+      properties:
+        runId:
+          $ref: '#/components/schemas/RunId'
+        family:
+          $ref: '#/components/schemas/Family'
+        prompt:
+          type: string
+          description: Non-empty unless `attachments` has at least one item (enforced by the server).
+        modelId:
+          type: string
+        mode:
+          $ref: '#/components/schemas/RunMode'
+        inheritProjectMcp:
+          type: boolean
+          description: When false, native CLIs do not load MCP servers configured in the workspace for this run. Omitted keeps them. Never persisted.
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunAttachment'
+        workspace:
+          type: object
+          required: [product, path]
+          properties:
+            product:
+              type: string
+              description: Must equal the authenticated product.
+            path:
+              type: string
+              description: Relative to the product's workspace root (absolute accepted only when already inside it).
+          additionalProperties: false
+        credential:
+          type: object
+          required: [secret]
+          description: Never persisted; lives only in memory while the run is alive and is redacted from every event.
+          properties:
+            secret:
+              type: string
+          additionalProperties: false
+        sessionRef:
+          type: string
+          description: Legacy provider ref (`--resume`) for a single turn; when `sessionId` is absent it seeds the ephemeral session.
+        sessionId:
+          $ref: '#/components/schemas/SessionId'
+          description: Turn of an existing session of the authenticated product. Absent ⇒ the run gets its own ephemeral session, closed after `run/finished`.
+        mcpServers:
+          type: array
+          items:
+            $ref: '#/components/schemas/McpServer'
+        timeoutSec:
+          type: integer
+          minimum: 1
+        meta:
+          $ref: '#/components/schemas/StringMap'
+      additionalProperties: false
+
+    TurnRequest:
+      type: object
+      description: A turn of an existing session. `family`, `workspace`, `sessionRef` and `sessionId` are rejected — the session owns them.
+      required: [runId, prompt]
+      properties:
+        runId:
+          $ref: '#/components/schemas/RunId'
+        prompt:
+          type: string
+          description: Non-empty unless `attachments` has at least one item (enforced by the server).
+        modelId:
+          type: string
+        mode:
+          $ref: '#/components/schemas/RunMode'
+        inheritProjectMcp:
+          type: boolean
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunAttachment'
+        credential:
+          type: object
+          required: [secret]
+          description: Never persisted.
+          properties:
+            secret:
+              type: string
+          additionalProperties: false
+        mcpServers:
+          type: array
+          items:
+            $ref: '#/components/schemas/McpServer'
+        timeoutSec:
+          type: integer
+          minimum: 1
+        meta:
+          $ref: '#/components/schemas/StringMap'
+      additionalProperties: false
+
+    RunRecord:
+      type: object
+      description: Persisted run state (`meta.json`). Never contains `credential`.
+      required: [id, product, family, status, workspaceDir, prompt, createdAt, lastSeq]
+      properties:
+        id:
+          $ref: '#/components/schemas/RunId'
+        product:
+          type: string
+        family:
+          $ref: '#/components/schemas/Family'
+        status:
+          $ref: '#/components/schemas/RunStatus'
+        modelId:
+          type: string
+        mode:
+          $ref: '#/components/schemas/RunMode'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunAttachment'
+        workspaceDir:
+          type: string
+        prompt:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        sessionRef:
+          type: string
+        sessionId:
+          $ref: '#/components/schemas/SessionId'
+          description: Session this run is a turn of (ephemeral when the request carried no `sessionId`). Absent only on records from before sessions existed.
+        lastSeq:
+          type: integer
+          minimum: 0
+        error:
+          $ref: '#/components/schemas/RunError'
+        usage:
+          $ref: '#/components/schemas/Usage'
+        meta:
+          $ref: '#/components/schemas/StringMap'
+      additionalProperties: false
+
+    EventType:
+      type: string
+      enum:
+        - run/queued
+        - run/started
+        - context/usage
+        - system/init
+        - assistant/delta
+        - assistant/message
+        - assistant/thinking
+        - tool/call
+        - tool/result
+        - log/line
+        - llm/retry
+        - compaction
+        - run/finished
+
+    RunQueuedData:
+      type: object
+      required: [position]
+      properties:
+        position:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+
+    RunStartedData:
+      type: object
+      additionalProperties: false
+
+    ContextUsageCategories:
+      type: object
+      required:
+        - systemPrompt
+        - toolDefinitions
+        - rules
+        - skills
+        - mcp
+        - subagentDefinitions
+        - conversation
+      properties:
+        systemPrompt:
+          type: integer
+          minimum: 0
+        toolDefinitions:
+          type: integer
+          minimum: 0
+        rules:
+          type: integer
+          minimum: 0
+        skills:
+          type: integer
+          minimum: 0
+        mcp:
+          type: integer
+          minimum: 0
+        subagentDefinitions:
+          type: integer
+          minimum: 0
+        conversation:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+
+    ContextPrecision:
+      type: string
+      enum: [exact, estimate]
+
+    ContextUsage:
+      type: object
+      required: [contextWindow, usedTokens, precision, categories]
+      properties:
+        contextWindow:
+          type: [integer, 'null']
+          description: Model `maxInputTokens` when published; null when unknown (never a hardcoded default).
+        usedTokens:
+          type: integer
+          minimum: 0
+          description: Sum of the seven categories when precision is estimate; the provider inputTokens when precision is exact.
+        precision:
+          $ref: '#/components/schemas/ContextPrecision'
+        categories:
+          $ref: '#/components/schemas/ContextUsageCategories'
+      additionalProperties: false
+
+    CompactResult:
+      type: object
+      required: [dropped, retained, usage]
+      properties:
+        dropped:
+          type: integer
+          minimum: 0
+        retained:
+          type: integer
+          minimum: 0
+        usage:
+          $ref: '#/components/schemas/ContextUsage'
+      additionalProperties: false
+
+    ContextPreviewRequest:
+      type: object
+      required: [family, prompt]
+      properties:
+        family:
+          $ref: '#/components/schemas/Family'
+        mode:
+          $ref: '#/components/schemas/RunMode'
+        modelId:
+          type: string
+        workspacePath:
+          type: string
+          description: Absolute or product-relative workspace path.
+        workspace:
+          type: object
+          required: [path]
+          properties:
+            product:
+              type: string
+            path:
+              type: string
+          additionalProperties: false
+        prompt:
+          type: string
+        sessionId:
+          $ref: '#/components/schemas/SessionId'
+          description: When set, the estimate adds the tokens already in that session's log. Absent keeps the draft-only estimate.
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunAttachment'
+      additionalProperties: false
+
+    SystemInitData:
+      type: object
+      properties:
+        sessionRef:
+          type: string
+        model:
+          type: string
+      additionalProperties: true
+
+    AssistantDeltaData:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+      additionalProperties: true
+
+    AssistantMessageData:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+      additionalProperties: true
+
+    ToolCallData:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        args: {}
+      additionalProperties: true
+
+    ToolResultData:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        content: {}
+      additionalProperties: true
+
+    LogLineData:
+      type: object
+      required: [line]
+      properties:
+        line:
+          type: string
+        stream:
+          type: string
+          enum: [stdout, stderr]
+      additionalProperties: true
+
+    LlmRetryData:
+      type: object
+      required: [attempt]
+      properties:
+        attempt:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+      additionalProperties: true
+
+    CompactionData:
+      type: object
+      additionalProperties: true
+
+    RunFinishedData:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [SUCCEEDED, FAILED, CANCELLED]
+        sessionRef:
+          type: string
+        error:
+          $ref: '#/components/schemas/RunError'
+        usage:
+          $ref: '#/components/schemas/Usage'
+      additionalProperties: false
+
+    RunEvent:
+      type: object
+      description: Normalized event (EVT-01). `data` shape depends on `type`.
+      required: [id, runId, seq, at, type, data]
+      properties:
+        id:
+          type: string
+          description: '`<runId>:<seq>`'
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}:[0-9]+$'
+        runId:
+          $ref: '#/components/schemas/RunId'
+        seq:
+          type: integer
+          minimum: 1
+        at:
+          type: string
+          format: date-time
+        type:
+          $ref: '#/components/schemas/EventType'
+        data: {}
+      additionalProperties: false
+      allOf:
+        - if:
+            properties: { type: { const: run/queued } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/RunQueuedData' } }
+        - if:
+            properties: { type: { const: run/started } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/RunStartedData' } }
+        - if:
+            properties: { type: { const: context/usage } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/ContextUsage' } }
+        - if:
+            properties: { type: { const: system/init } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/SystemInitData' } }
+        - if:
+            properties: { type: { const: assistant/delta } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/AssistantDeltaData' } }
+        - if:
+            properties: { type: { const: assistant/thinking } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/AssistantDeltaData' } }
+        - if:
+            properties: { type: { const: assistant/message } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/AssistantMessageData' } }
+        - if:
+            properties: { type: { const: tool/call } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/ToolCallData' } }
+        - if:
+            properties: { type: { const: tool/result } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/ToolResultData' } }
+        - if:
+            properties: { type: { const: log/line } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/LogLineData' } }
+        - if:
+            properties: { type: { const: llm/retry } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/LlmRetryData' } }
+        - if:
+            properties: { type: { const: compaction } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/CompactionData' } }
+        - if:
+            properties: { type: { const: run/finished } }
+          then:
+            properties: { data: { $ref: '#/components/schemas/RunFinishedData' } }
+
+    ExternalModel:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+        provider:
+          type: string
+        label:
+          type: string
+        default:
+          type: boolean
+        mode:
+          type: string
+        maxInputTokens:
+          type: integer
+        pricing:
+          type: object
+          properties:
+            input:
+              type: number
+            output:
+              type: number
+          additionalProperties: false
+      additionalProperties: false
+
+    ExternalModels:
+      type: object
+      required: [models]
+      properties:
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExternalModel'
+      additionalProperties: false
+
+    ProviderHealth:
+      type: object
+      required: [available]
+      properties:
+        available:
+          type: boolean
+        detail:
+          type: string
+      additionalProperties: false
+
+    ProviderInfo:
+      type: object
+      required: [family, kind, capabilities, streaming, resume, models, permissions, available]
+      properties:
+        family:
+          $ref: '#/components/schemas/Family'
+        kind:
+          $ref: '#/components/schemas/ProviderKind'
+        capabilities:
+          $ref: '#/components/schemas/ProviderCapabilities'
+        streaming:
+          type: boolean
+        resume:
+          type: boolean
+        models:
+          type: string
+          enum: [static, remote, none]
+        permissions:
+          type: array
+          items:
+            type: string
+        available:
+          type: boolean
+      additionalProperties: false
+
+    Health:
+      type: object
+      required: [status, version, providers]
+      properties:
+        status:
+          type: string
+          enum: [UP, DEGRADED]
+        version:
+          type: string
+        providers:
+          type: object
+          description: Keyed by family.
+          additionalProperties:
+            $ref: '#/components/schemas/ProviderHealth'
+        litellm:
+          type: object
+          required: [available]
+          properties:
+            available:
+              type: boolean
+          additionalProperties: false
+      additionalProperties: false

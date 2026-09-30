@@ -1,0 +1,46 @@
+# Ask and plan pass Read,Grep,Glob. Agent uses AMAZING_CLI_CLAUDE_ALLOWED_TOOLS or the default list.
+# Plan prefixes the prompt. {model} and {resume} drop their flags when empty.
+family: claude
+kind: spawn
+label: Claude
+credentialEnv: ANTHROPIC_API_KEY
+binary: claude
+parser: claude
+permissions: [Read, Edit, Write, Bash, Grep, Glob]
+planPrompt: "Reply with a plan only; do not apply any edits.\n\n"
+argv:
+  - -p
+  - --output-format
+  - stream-json
+  - --verbose
+  - --include-partial-messages
+  - --add-dir
+  - "{workspace}"
+  - --allowedTools
+  - "{claude-tools}"
+  - --model
+  - "{model}"
+  - --resume
+  - "{resume}"
+  - "{prompt}"
+models:
+  source: static
+  static:
+    - sonnet
+    - opus
+    - haiku
+    - fable
+    - claude-sonnet-5
+    - claude-opus-5
+    - claude-sonnet-4-6
+    - claude-opus-4-6
+    - claude-sonnet-4-5-20250929
+    - claude-opus-4-5-20251101
+capabilities:
+  streaming: true
+  resume: true
+  modes: [ask, plan, agent]
+  attachments: [image, file, folder]
+  compaction: internal
+  contextUsage: exact
+  mcp: true

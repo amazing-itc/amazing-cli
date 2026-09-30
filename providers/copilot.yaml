@@ -1,0 +1,39 @@
+# Ask and plan drop shell and write. Plan prefixes the prompt.
+# AMAZING_CLI_COPILOT_ALLOW_TOOLS overrides the default allow-tool list.
+# Resume is a single --resume=<ref> argument.
+family: copilot
+kind: spawn
+label: Copilot
+credentialEnv: COPILOT_GITHUB_TOKEN
+binary: copilot
+parser: copilot
+permissions: [shell, write]
+planPrompt: "Reply with a plan only; must not apply edits.\n\n"
+argv:
+  - -p
+  - "{prompt}"
+  - --output-format
+  - json
+  - --no-ask-user
+  - "{copilot-tools}"
+  - --model
+  - "{model}"
+  - "--resume={resume}"
+models:
+  source: static
+  static:
+    - auto
+    - claude-sonnet-4.6
+    - gpt-5.4
+    - claude-haiku-4.5
+    - gpt-5.3-codex
+    - gemini-3.1-pro-preview
+    - gemini-3.5-flash
+capabilities:
+  streaming: true
+  resume: true
+  modes: [ask, plan, agent]
+  attachments: [image, file, folder]
+  compaction: internal
+  contextUsage: exact
+  mcp: true

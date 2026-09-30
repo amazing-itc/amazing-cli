@@ -1,0 +1,24 @@
+name: Bug
+description: Something that should work and does not
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: Include /health status. No .env, product key, or CLI token.
+    validations:
+      required: true

@@ -1,0 +1,12 @@
+amazing-cli
+Copyright (c) 2026 Amazing
+
+This product is licensed under the MIT License. See the LICENSE file.
+
+Third-party components are used under their own licenses. This notice does not relicense them.
+
+- @modelcontextprotocol/sdk — MIT License
+- yaml (eemeli) — ISC License
+- LiteLLM, when you run the Compose service — license of the LiteLLM project, not this MIT grant
+
+Other direct and transitive dependencies keep the license declared by their authors.

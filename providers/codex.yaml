@@ -1,0 +1,46 @@
+# Resume replaces the argv (`exec resume {resume} --json`) and omits -C.
+# Ask and plan omit --sandbox workspace-write. Plan prefixes the prompt.
+# The credential is also written to $HOME/.codex/auth.json; Codex does not read the env var alone.
+family: codex
+kind: spawn
+label: Codex
+credentialEnv: OPENAI_API_KEY
+binary: codex
+parser: codex
+permissions: [workspace-write]
+planPrompt: "Reply with a plan only. Do not apply any edits.\n\n"
+argv:
+  - exec
+  - --json
+  - -C
+  - "{workspace}"
+  - "{mode.agent:--sandbox}"
+  - "{mode.agent:workspace-write}"
+  - --skip-git-repo-check
+  - --model
+  - "{model}"
+  - "{prompt}"
+resumeArgv:
+  - exec
+  - resume
+  - "{resume}"
+  - --json
+  - --model
+  - "{model}"
+  - "{prompt}"
+models:
+  source: static
+  static:
+    - gpt-5.6-sol
+    - gpt-5.6
+    - gpt-5.6-terra
+    - gpt-5.6-luna
+    - gpt-5.5
+capabilities:
+  streaming: true
+  resume: true
+  modes: [ask, plan, agent]
+  attachments: [image, file, folder]
+  compaction: internal
+  contextUsage: exact
+  mcp: true

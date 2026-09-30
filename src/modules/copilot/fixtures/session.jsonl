@@ -1,0 +1,5 @@
+{"type":"assistant","text":"Hello"}
+{"type":"assistant","text":" from copilot"}
+{"type":"tool","name":"shell","args":{"command":"echo hi"}}
+{"type":"tool_result","name":"shell","content":"hi"}
+{"type":"result","sessionId":"copilot-sess-1","usage":{"input_tokens":10,"output_tokens":20}}
